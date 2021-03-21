@@ -2,11 +2,17 @@ package d2xx
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/ysh86/ft64/d2xx/ftdi"
 )
 
-func OpenRom() (*device, error) {
+type rom struct {
+	dev      *device
+	commands [4096]byte
+}
+
+func OpenRom() (*rom, error) {
 	// open 1st dev
 	num, err := numDevices()
 	if err != nil {
@@ -37,25 +43,80 @@ func OpenRom() (*device, error) {
 		return nil, err
 	}
 
+	r := &rom{dev: dev}
+	time.Sleep(50 * time.Millisecond)
+
 	// try MPSSE
-	err = dev.tryMpsse()
+	err = r.tryMpsse()
 	if err != nil {
-		dev.closeDev()
+		r.CloseROM()
 		return nil, err
 	}
 
-	return dev, nil
+	return r, nil
 }
 
-func (d *device) CloseROM() {
-	d.closeDev()
+func (r *rom) CloseROM() {
+	r.dev.setBitMode(0, bitModeReset)
+	r.dev.closeDev()
 }
 
-func (d *device) tryMpsse() error {
+func (r *rom) tryMpsse() error {
+	b := 0
+	e := 0
+
+	// Enable loopback
+	r.commands[e] = 0x84
+	e++
+	sent, err := r.dev.write(r.commands[b:e])
+	if err != nil {
+		return err
+	}
+	if sent != e-b {
+		return fmt.Errorf("failed to write command: 0x%02x", r.commands[b])
+	}
+	b++
+	// Check the receive buffer is empty
+	n, err := r.dev.read(r.commands[e : e+1])
+	if n != 0 || err != nil {
+		return fmt.Errorf("MPSSE receive buffer should be empty")
+	}
+
+	// Synchronize the MPSSE
+	r.commands[e] = 0xab // bogus command
+	e++
+	sent, err = r.dev.write(r.commands[b:e])
+	b++
+	for n == 0 && err == nil {
+		n, err = r.dev.read(r.commands[e : e+2])
+	}
+	if err != nil {
+		return err
+	}
+	if n != 2 || r.commands[e] != 0xfa || r.commands[e+1] != 0xab {
+		return fmt.Errorf("failed to synchronize the MPSSE")
+	}
+
+	// Disable loopback
+	r.commands[e] = 0x85
+	e++
+	sent, err = r.dev.write(r.commands[b:e])
+	if err != nil {
+		return err
+	}
+	if sent != e-b {
+		return fmt.Errorf("failed to write command: 0x%02x", r.commands[b])
+	}
+	b++
+	// Check the receive buffer is empty
+	n, err = r.dev.read(r.commands[e : e+1])
+	if n != 0 || err != nil {
+		return fmt.Errorf("MPSSE receive buffer should be empty")
+	}
 
 	return nil
 }
 
-func (d *device) DevInfo() (ftdi.DevType, uint16, uint16) {
-	return d.t, d.venID, d.devID
+func (r *rom) DevInfo() (ftdi.DevType, uint16, uint16) {
+	return r.dev.t, r.dev.venID, r.dev.devID
 }

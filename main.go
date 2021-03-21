@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/ysh86/ft64/d2xx"
 )
@@ -12,7 +13,8 @@ func main() {
 
 	rom, err := d2xx.OpenRom()
 	if err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		return
 	}
 	//fmt.Printf("ROM handle: %v\n", rom)
 	defer rom.CloseROM()
