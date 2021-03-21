@@ -14,7 +14,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("ROM handle: %v\n", rom)
+	//fmt.Printf("ROM handle: %v\n", rom)
 	defer rom.CloseROM()
+
+	devType, venID, devID := rom.DevInfo()
+	fmt.Printf("DevType: %v, vendor ID: 0x%04x, device ID: 0x%04x\n", devType, venID, devID)
 
 }

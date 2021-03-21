@@ -1,6 +1,10 @@
 package d2xx
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/ysh86/ft64/d2xx/ftdi"
+)
 
 func OpenRom() (*device, error) {
 	// open 1st dev
@@ -50,4 +54,8 @@ func (d *device) CloseROM() {
 func (d *device) tryMpsse() error {
 
 	return nil
+}
+
+func (d *device) DevInfo() (ftdi.DevType, uint16, uint16) {
+	return d.t, d.venID, d.devID
 }
