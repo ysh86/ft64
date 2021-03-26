@@ -15,6 +15,7 @@ type rom struct {
 
 func OpenRom() (*rom, error) {
 	// open 1st & 2nd dev
+	supported := ftdi.FT2232H
 	num, err := numDevices()
 	if err != nil {
 		return nil, err
@@ -26,8 +27,8 @@ func OpenRom() (*rom, error) {
 	if err != nil {
 		return nil, err
 	}
-	supported := ftdi.FT2232H
 	if devA.t != supported {
+		devA.closeDev()
 		return nil, fmt.Errorf("device is not %v, but %v", supported, devA.t)
 	}
 	devB, err := openDev(d2xxOpen, 1)
@@ -36,6 +37,8 @@ func OpenRom() (*rom, error) {
 		return nil, err
 	}
 	if devB.t != supported {
+		devA.closeDev()
+		devB.closeDev()
 		return nil, fmt.Errorf("device is not %v, but %v", supported, devB.t)
 	}
 
@@ -122,8 +125,8 @@ func (r *rom) DevInfo() (ftdi.DevType, uint16, uint16) {
 	return r.devB.t, r.devB.venID, r.devB.devID
 }
 
-func (r *rom) ReadHeader() ([]byte, error) {
-	err := r.n64SetAddress(0x1000_0000)
+func (r *rom) Read512(addr uint32) ([]byte, error) {
+	err := r.n64SetAddress(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +246,7 @@ func (r *rom) n64SetupPins() error {
 	e++
 	r.commands[e] = 0x97 // Turn off adaptive clocking
 	e++
-	r.commands[e] = 0x8d // Disable three-phase clocking
+	r.commands[e] = 0x8c //0x8d // Disable three-phase clocking
 	e++
 	r.commands[e] = 0x86 // set clock divisor
 	e++
@@ -264,7 +267,7 @@ func (r *rom) n64SetupPins() error {
 	// pins A
 	r.commands[e] = 0x80
 	e++
-	r.commands[e] = 0b1011_0001 // ALE_H:1, ALE_L:0, /RE:1, /WE:1, CS:0, (MISO:0, MOSI:0, SCLK:1)
+	r.commands[e] = 0b0011_0001 // ALE_H:1, ALE_L:0, /RE:1, /WE:1, CS:0, (MISO:0, MOSI:0, SCLK:1)
 	e++
 	r.commands[e] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out, (MISO:In, MOSI:Out, SCLK:Out)
 	e++
@@ -348,6 +351,11 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
+	// wait 0 = 1.4[us] + 0.2[us]
+	// wait 1 = 2.6[us] + 0.2[us]
+	// wait 2 = 3.8[us] + 0.2[us]
+	// wait 4 = 6.4[us] + 0.2[us]
+	// wait 9 = 12.5[us] + 0.2[us]
 	{
 		r.commands[eA] = 0x8f // wait
 		eA++
@@ -369,14 +377,7 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// CS:0 for delay
-	r.commands[eA] = 0x80
-	eA++
-	r.commands[eA] = 0b1111_0001 // ALE_H, ALE_L, /RE, /WE, CS
-	eA++
-	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
-	eA++
-	// CS:0 for delay
+	// CS:0 for delay 200[ns]
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b1111_0001 // ALE_H, ALE_L, /RE, /WE, CS
@@ -384,9 +385,18 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
 
-	// addr Hi
-	r.commands[eB] = 0x88 // Wait On I/O High
+	// Wait On I/O High
+	r.commands[eB] = 0x88
 	eB++
+	// for delay
+	r.commands[eB] = 0x80
+	eB++
+	r.commands[eB] = 0b0101_0001 // S_DAT, CLK, WAIT, /RST, CS
+	eB++
+	r.commands[eB] = 0b0101_1011 // S_DAT:In, CLK:Out, WAIT:In, /RST:Out, CS:Out
+	eB++
+
+	// addr Hi
 	r.commands[eB] = 0x82
 	eB++
 	r.commands[eB] = uint8(addr >> 24) // AD15-8
@@ -413,17 +423,19 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// CS:0 for delay
-	r.commands[eA] = 0x80
-	eA++
-	r.commands[eA] = 0b0111_0001 // ALE_H, ALE_L, /RE, /WE, CS
-	eA++
-	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
-	eA++
+
+	// Wait On I/O High
+	r.commands[eB] = 0x88
+	eB++
+	// for delay
+	r.commands[eB] = 0x80
+	eB++
+	r.commands[eB] = 0b0101_0001 // S_DAT, CLK, WAIT, /RST, CS
+	eB++
+	r.commands[eB] = 0b0101_1011 // S_DAT:In, CLK:Out, WAIT:In, /RST:Out, CS:Out
+	eB++
 
 	// addr Lo
-	r.commands[eB] = 0x88 // Wait On I/O High
-	eB++
 	r.commands[eB] = 0x82
 	eB++
 	r.commands[eB] = uint8((addr >> 8) & 0xff) // AD15-8
@@ -439,9 +451,9 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	// ALE_H / ALE_L = 0 / 0
 	r.commands[eA] = 0x80
 	eA++
-	r.commands[eA] = 0b0011_0000 | 0x09 // ALE_H, ALE_L, /RE, /WE
+	r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
-	r.commands[eA] = 0b1111_0000 | 0x0b // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out
+	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
 
 	_, err := r.devB.write(r.commands[bB:eB])
@@ -484,7 +496,7 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 		eA++
 		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 		eA++
-		{
+		if false {
 			r.commands[eA] = 0x8f // wait
 			eA++
 			r.commands[eA] = 15 // uint16 Lo
@@ -506,17 +518,19 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 		eA++
 		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 		eA++
-		// CS:0 for delay
-		r.commands[eA] = 0x80
-		eA++
-		r.commands[eA] = 0b0001_0001 // ALE_H, ALE_L, /RE, /WE, CS
-		eA++
-		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
-		eA++
+
+		// Wait On I/O High
+		r.commands[eB] = 0x88
+		eB++
+		// for delay
+		r.commands[eB] = 0x80
+		eB++
+		r.commands[eB] = 0b0101_0001 // S_DAT, CLK, WAIT, /RST, CS
+		eB++
+		r.commands[eB] = 0b0101_1011 // S_DAT:In, CLK:Out, WAIT:In, /RST:Out, CS:Out
+		eB++
 
 		// read
-		r.commands[eB] = 0x88 // Wait On I/O High
-		eB++
 		r.commands[eB] = 0x83 // AD15-8
 		eB++
 		r.commands[eA] = 0x83 // AD7-0
