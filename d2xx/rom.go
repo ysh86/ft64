@@ -199,7 +199,7 @@ func (r *rom) tryMpsse(dev *device) error {
 //  Channel A:
 //   ADBUS0: TCK/SK: OUT (SPI SCLK)
 //   ADBUS1: TDI/DO: OUT (SPI MOSI)
-//   ADBUS2: TDO/DI: IN  (SPI MISO)
+//   ADBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo?
 //   ADBUS3: TMS/CS: OUT SPI CS -> Ch.B GPIOL1
 //   ADBUS4: GPIOL0: OUT /WE
 //   ADBUS5: GPIOL1: OUT /RE
@@ -218,12 +218,12 @@ func (r *rom) tryMpsse(dev *device) error {
 //  Channel B:
 //   BDBUS0: TCK/SK: OUT (SPI SCLK)
 //   BDBUS1: TDI/DO: OUT (SPI MOSI)
-//   BDBUS2: TDO/DI: IN  (SPI MISO)
+//   BDBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo?
 //   BDBUS3: TMS/CS: OUT (SPI CS)
 //   BDBUS4: GPIOL0: OUT /RST
 //   BDBUS5: GPIOL1: IN  WAIT for Ch.A
 //   BDBUS6: GPIOL2: OUT CLK
-//   BDBUS7: GPIOL3: IN  S_DAT
+//   BDBUS7: GPIOL3: IN  S_DAT // TODO: Not used. It should be output/Lo? or Pull-up
 //
 //   BCBUS0: GPIOH0: I/O AD8
 //   BCBUS1: GPIOH1: I/O AD9
@@ -246,7 +246,7 @@ func (r *rom) n64SetupPins() error {
 	e++
 	r.commands[e] = 0x97 // Turn off adaptive clocking
 	e++
-	r.commands[e] = 0x8c //0x8d // Disable three-phase clocking
+	r.commands[e] = 0x8c //0x8d // Disable three-phase clocking // TODO
 	e++
 	r.commands[e] = 0x86 // set clock divisor
 	e++
@@ -283,7 +283,6 @@ func (r *rom) n64SetupPins() error {
 	}
 	b = e
 
-	// TODO: pull-up S_DAT
 	// pins B
 	r.commands[e] = 0x80
 	e++
@@ -309,7 +308,6 @@ func (r *rom) n64ResetROM() error {
 	b := 0
 	e := 0
 
-	// TODO: pull-up S_DAT
 	// pins B
 	r.commands[e] = 0x80
 	e++
@@ -344,18 +342,18 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	bB := 8192
 	eB := 8192
 
-	// ALE_H / ALE_L = 0/0 -> wait -> 1/0 -> 1/1,CS:1 -> 1/1,CS:0 x2
+	// ALE_H / ALE_L = 0/0 -> wait -> 1/0 -> 1/1,CS:1 -> 1/1,CS:0
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// wait 0 = 1.4[us] + 0.2[us]
-	// wait 1 = 2.6[us] + 0.2[us]
-	// wait 2 = 3.8[us] + 0.2[us]
-	// wait 4 = 6.4[us] + 0.2[us]
-	// wait 9 = 12.5[us] + 0.2[us]
+	// wait 0 =  1.6[us]
+	// wait 1 =  2.8[us] (+1.2[us]  = 1.20u/byte = 150n/bit)
+	// wait 2 =  4.0[us] (+2.4[us]  = 1.20u/byte = 150n/bit)
+	// wait 4 =  6.6[us] (+5.0[us]  = 1.25u/byte = 156n/bit)
+	// wait 9 = 12.5[us] (+10.9[us] = 1.21u/byte = 151n/bit)
 	{
 		r.commands[eA] = 0x8f // wait
 		eA++
@@ -496,6 +494,8 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 		eA++
 		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 		eA++
+		// TODO: flash
+		// wait 15 = 1.6u + 150/bit * 8 * 15 = 19.6[us]
 		if false {
 			r.commands[eA] = 0x8f // wait
 			eA++
