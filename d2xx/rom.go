@@ -206,14 +206,14 @@ func (r *rom) tryMpsse(dev *device) error {
 //   ADBUS6: GPIOL2: OUT ALE_L
 //   ADBUS7: GPIOL3: OUT ALE_H
 //
-//   ACBUS0: GPIOH0: I/O AD0
-//   ACBUS1: GPIOH1: I/O AD1
-//   ACBUS2: GPIOH2: I/O AD2
-//   ACBUS3: GPIOH3: I/O AD3
-//   ACBUS4: GPIOH4: I/O AD4
-//   ACBUS5: GPIOH5: I/O AD5
-//   ACBUS6: GPIOH6: I/O AD6
-//   ACBUS7: GPIOH7: I/O AD7
+//   ACBUS0: GPIOH0: I/O AD0 (default: In)
+//   ACBUS1: GPIOH1: I/O AD1 (default: In)
+//   ACBUS2: GPIOH2: I/O AD2 (default: In)
+//   ACBUS3: GPIOH3: I/O AD3 (default: In)
+//   ACBUS4: GPIOH4: I/O AD4 (default: In)
+//   ACBUS5: GPIOH5: I/O AD5 (default: In)
+//   ACBUS6: GPIOH6: I/O AD6 (default: In)
+//   ACBUS7: GPIOH7: I/O AD7 (default: In)
 //
 //  Channel B:
 //   BDBUS0: TCK/SK: OUT (SPI SCLK)
@@ -225,14 +225,14 @@ func (r *rom) tryMpsse(dev *device) error {
 //   BDBUS6: GPIOL2: OUT CLK
 //   BDBUS7: GPIOL3: IN  S_DAT // TODO: Not used. It should be output/Lo? or Pull-up
 //
-//   BCBUS0: GPIOH0: I/O AD8
-//   BCBUS1: GPIOH1: I/O AD9
-//   BCBUS2: GPIOH2: I/O AD10
-//   BCBUS3: GPIOH3: I/O AD11
-//   BCBUS4: GPIOH4: I/O AD12
-//   BCBUS5: GPIOH5: I/O AD13
-//   BCBUS6: GPIOH6: I/O AD14
-//   BCBUS7: GPIOH7: I/O AD15
+//   BCBUS0: GPIOH0: I/O AD8  (default: In)
+//   BCBUS1: GPIOH1: I/O AD9  (default: In)
+//   BCBUS2: GPIOH2: I/O AD10 (default: In)
+//   BCBUS3: GPIOH3: I/O AD11 (default: In)
+//   BCBUS4: GPIOH4: I/O AD12 (default: In)
+//   BCBUS5: GPIOH5: I/O AD13 (default: In)
+//   BCBUS6: GPIOH6: I/O AD14 (default: In)
+//   BCBUS7: GPIOH7: I/O AD15 (default: In)
 //
 func (r *rom) n64SetupPins() error {
 	b := 0
@@ -275,7 +275,7 @@ func (r *rom) n64SetupPins() error {
 	e++
 	r.commands[e] = 0x00 // AD7-0:0
 	e++
-	r.commands[e] = 0xff // AD7-0:Out
+	r.commands[e] = 0x00 // AD7-0:In
 	e++
 	_, err = r.devA.write(r.commands[b:e])
 	if err != nil {
@@ -294,7 +294,7 @@ func (r *rom) n64SetupPins() error {
 	e++
 	r.commands[e] = 0x00 // AD15-8:0
 	e++
-	r.commands[e] = 0xff // AD15-8:Out
+	r.commands[e] = 0x00 // AD15-8:In
 	e++
 	_, err = r.devB.write(r.commands[b:e])
 	if err != nil {
@@ -446,12 +446,44 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	eA++
 	r.commands[eA] = 0xff // AD7-0:Out
 	eA++
-	// ALE_H / ALE_L = 0 / 0
+	// ALE_H / ALE_L = 0/0,CS:1
+	r.commands[eA] = 0x80
+	eA++
+	r.commands[eA] = 0b0011_1001 // ALE_H, ALE_L, /RE, /WE, CS
+	eA++
+	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
+	eA++
+	// CS:0 for delay
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
+	eA++
+
+	// Wait On I/O High
+	r.commands[eB] = 0x88
+	eB++
+	// for delay
+	r.commands[eB] = 0x80
+	eB++
+	r.commands[eB] = 0b0101_0001 // S_DAT, CLK, WAIT, /RST, CS
+	eB++
+	r.commands[eB] = 0b0101_1011 // S_DAT:In, CLK:Out, WAIT:In, /RST:Out, CS:Out
+	eB++
+
+	// Bus direction
+	r.commands[eB] = 0x82
+	eB++
+	r.commands[eB] = 0x00 // AD15-8
+	eB++
+	r.commands[eB] = 0x00 // AD15-8:In
+	eB++
+	r.commands[eA] = 0x82
+	eA++
+	r.commands[eA] = 0x00 // AD7-0
+	eA++
+	r.commands[eA] = 0x00 // AD7-0:In
 	eA++
 
 	_, err := r.devB.write(r.commands[bB:eB])
@@ -471,20 +503,6 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 	eA := 0
 	bB := 8192
 	eB := 8192
-
-	// Bus direction
-	r.commands[eB] = 0x82
-	eB++
-	r.commands[eB] = 0x00 // AD15-8
-	eB++
-	r.commands[eB] = 0x00 // AD15-8:In
-	eB++
-	r.commands[eA] = 0x82
-	eA++
-	r.commands[eA] = 0x00 // AD7-0
-	eA++
-	r.commands[eA] = 0x00 // AD7-0:In
-	eA++
 
 	for i := 0; i < 256; i++ {
 		// /RE = 0
@@ -544,36 +562,6 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 		eA++
 	}
-
-	// Bus direction
-	r.commands[eB] = 0x88 // Wait On I/O High
-	eB++
-	r.commands[eB] = 0x82
-	eB++
-	r.commands[eB] = 0x00 // AD15-8
-	eB++
-	r.commands[eB] = 0xff // AD15-8:Out
-	eB++
-	// CS:1
-	r.commands[eA] = 0x80
-	eA++
-	r.commands[eA] = 0b0011_1001 // ALE_H, ALE_L, /RE, /WE, CS
-	eA++
-	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
-	eA++
-	// CS:0
-	r.commands[eA] = 0x80
-	eA++
-	r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
-	eA++
-	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
-	eA++
-	r.commands[eA] = 0x82
-	eA++
-	r.commands[eA] = 0x00 // AD7-0
-	eA++
-	r.commands[eA] = 0xff // AD7-0:Out
-	eA++
 
 	_, err := r.devB.write(r.commands[bB:eB])
 	if err != nil {
