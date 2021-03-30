@@ -199,7 +199,7 @@ func (r *rom) tryMpsse(dev *device) error {
 //  Channel A:
 //   ADBUS0: TCK/SK: OUT (SPI SCLK)
 //   ADBUS1: TDI/DO: OUT (SPI MOSI)
-//   ADBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo?
+//   ADBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo or loopback?
 //   ADBUS3: TMS/CS: OUT SPI CS -> Ch.B GPIOL1
 //   ADBUS4: GPIOL0: OUT /WE
 //   ADBUS5: GPIOL1: OUT /RE
@@ -218,12 +218,12 @@ func (r *rom) tryMpsse(dev *device) error {
 //  Channel B:
 //   BDBUS0: TCK/SK: OUT (SPI SCLK)
 //   BDBUS1: TDI/DO: OUT (SPI MOSI)
-//   BDBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo?
+//   BDBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo or loopback?
 //   BDBUS3: TMS/CS: OUT (SPI CS)
 //   BDBUS4: GPIOL0: OUT /RST
 //   BDBUS5: GPIOL1: IN  WAIT for Ch.A
 //   BDBUS6: GPIOL2: OUT CLK
-//   BDBUS7: GPIOL3: IN  S_DAT // TODO: Not used. It should be output/Lo? or Pull-up
+//   BDBUS7: GPIOL3: IN  S_DAT // TODO: Not used. It should be output/Lo? or Pull-up.
 //
 //   BCBUS0: GPIOH0: I/O AD8  (default: In)
 //   BCBUS1: GPIOH1: I/O AD9  (default: In)
@@ -349,6 +349,7 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
+	// TODO:
 	// wait 0 =  1.6[us]
 	// wait 1 =  2.8[us] (+1.2[us]  = 1.20u/byte = 150n/bit)
 	// wait 2 =  4.0[us] (+2.4[us]  = 1.20u/byte = 150n/bit)
@@ -512,7 +513,7 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 		eA++
 		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 		eA++
-		// TODO: flash
+		// TODO: for flash?
 		// wait 15 = 1.6u + 150/bit * 8 * 15 = 19.6[us]
 		if false {
 			r.commands[eA] = 0x8f // wait
@@ -555,6 +556,13 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 		eA++
 
 		// /RE = 1
+		r.commands[eA] = 0x80
+		eA++
+		r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
+		eA++
+		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
+		eA++
+		// for delay
 		r.commands[eA] = 0x80
 		eA++
 		r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
