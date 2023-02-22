@@ -13,36 +13,36 @@ type rom struct {
 	commands [8192 * 2]byte
 }
 
-func OpenRom() (*rom, error) {
-	// open 1st & 2nd dev
-	supported := ftdi.FT2232H
+func OpenROM() (*rom, error) {
+	const (
+		SUPPORTED = ftdi.FT2232H
+	)
+
+	// open 1st & 2nd devs
 	num, err := numDevices()
-	if err != nil {
-		return nil, err
-	}
-	if num < 2 {
-		return nil, fmt.Errorf("numDevices: %d", num)
+	if err != nil || num < 2 {
+		return nil, fmt.Errorf("numDevices: num=%d, err=%w", num, err)
 	}
 	devA, err := openDev(d2xxOpen, 0)
 	if err != nil {
 		return nil, err
 	}
-	if devA.t != supported {
+	if devA.t != SUPPORTED {
 		devA.closeDev()
-		return nil, fmt.Errorf("device is not %v, but %v", supported, devA.t)
+		return nil, fmt.Errorf("device is not %s, but %s", SUPPORTED, devA.t)
 	}
 	devB, err := openDev(d2xxOpen, 1)
 	if err != nil {
 		devA.closeDev()
 		return nil, err
 	}
-	if devB.t != supported {
+	if devB.t != SUPPORTED {
 		devA.closeDev()
 		devB.closeDev()
-		return nil, fmt.Errorf("device is not %v, but %v", supported, devB.t)
+		return nil, fmt.Errorf("device is not %s, but %s", SUPPORTED, devB.t)
 	}
 
-	// configure device for MPSSE
+	// configure devices for MPSSE
 	err = devA.reset()
 	if err != nil {
 		devA.closeDev()
@@ -86,39 +86,43 @@ func OpenRom() (*rom, error) {
 	// try MPSSE
 	err = r.tryMpsse(r.devA)
 	if err != nil {
-		r.CloseROM()
+		r.Close()
 		return nil, err
 	}
 	err = r.tryMpsse(r.devB)
 	if err != nil {
-		r.CloseROM()
+		r.Close()
 		return nil, err
 	}
 
 	// setup GPIO
 	err = r.n64SetupPins()
 	if err != nil {
-		r.CloseROM()
+		r.Close()
 		return nil, err
 	}
 
 	// now ready to go
-	err = r.n64ResetROM()
+	err = r.n64ResetCart()
 	if err != nil {
-		r.CloseROM()
+		r.Close()
 		return nil, err
 	}
 
 	return r, nil
 }
 
-func (r *rom) CloseROM() {
-	r.devA.setBitMode(0, bitModeReset)
-	r.devB.setBitMode(0, bitModeReset)
-	r.devA.closeDev()
-	r.devB.closeDev()
-	r.devA = nil
-	r.devB = nil
+func (r *rom) Close() {
+	if r.devA != nil {
+		r.devA.setBitMode(0, bitModeReset)
+		r.devA.closeDev()
+		r.devA = nil
+	}
+	if r.devB != nil {
+		r.devB.setBitMode(0, bitModeReset)
+		r.devB.closeDev()
+		r.devB = nil
+	}
 }
 
 func (r *rom) DevInfo() (ftdi.DevType, uint16, uint16) {
@@ -131,11 +135,11 @@ func (r *rom) Read512(addr uint32) ([]byte, error) {
 		return nil, err
 	}
 
-	header, err := r.n64ReadROM512()
+	data, err := r.n64ReadROM512()
 	if err != nil {
 		return nil, err
 	}
-	return header, nil
+	return data, nil
 }
 
 func (r *rom) tryMpsse(dev *device) error {
@@ -156,7 +160,7 @@ func (r *rom) tryMpsse(dev *device) error {
 	// Check the receive buffer is empty
 	n, err := dev.read(r.commands[e : e+1])
 	if n != 0 || err != nil {
-		return fmt.Errorf("MPSSE receive buffer should be empty")
+		return fmt.Errorf("MPSSE receive buffer should be empty: n=%d, err=%w", n, err)
 	}
 
 	// Synchronize the MPSSE
@@ -188,7 +192,7 @@ func (r *rom) tryMpsse(dev *device) error {
 	// Check the receive buffer is empty
 	n, err = dev.read(r.commands[e : e+1])
 	if n != 0 || err != nil {
-		return fmt.Errorf("MPSSE receive buffer should be empty")
+		return fmt.Errorf("MPSSE receive buffer should be empty: n=%d, err=%w", n, err)
 	}
 
 	return nil
@@ -196,44 +200,43 @@ func (r *rom) tryMpsse(dev *device) error {
 
 // n64 pins:
 //
-//  Channel A:
-//   ADBUS0: TCK/SK: OUT (SPI SCLK)
-//   ADBUS1: TDI/DO: OUT (SPI MOSI)
-//   ADBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo or loopback?
-//   ADBUS3: TMS/CS: OUT SPI CS -> Ch.B GPIOL1
-//   ADBUS4: GPIOL0: OUT /WE
-//   ADBUS5: GPIOL1: OUT /RE
-//   ADBUS6: GPIOL2: OUT ALE_L
-//   ADBUS7: GPIOL3: OUT ALE_H
+// Channel A:
+// ADBUS0: TCK/SK: OUT (SPI SCLK)
+// ADBUS1: TDI/DO: OUT (SPI MOSI)
+// ADBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo or loopback?
+// ADBUS3: TMS/CS: OUT SPI CS -> Ch.B GPIOL1
+// ADBUS4: GPIOL0: OUT /WE
+// ADBUS5: GPIOL1: OUT /RE
+// ADBUS6: GPIOL2: OUT ALE_L
+// ADBUS7: GPIOL3: OUT ALE_H
 //
-//   ACBUS0: GPIOH0: I/O AD0 (default: In)
-//   ACBUS1: GPIOH1: I/O AD1 (default: In)
-//   ACBUS2: GPIOH2: I/O AD2 (default: In)
-//   ACBUS3: GPIOH3: I/O AD3 (default: In)
-//   ACBUS4: GPIOH4: I/O AD4 (default: In)
-//   ACBUS5: GPIOH5: I/O AD5 (default: In)
-//   ACBUS6: GPIOH6: I/O AD6 (default: In)
-//   ACBUS7: GPIOH7: I/O AD7 (default: In)
+// ACBUS0: GPIOH0: I/O AD0 (default: In)
+// ACBUS1: GPIOH1: I/O AD1 (default: In)
+// ACBUS2: GPIOH2: I/O AD2 (default: In)
+// ACBUS3: GPIOH3: I/O AD3 (default: In)
+// ACBUS4: GPIOH4: I/O AD4 (default: In)
+// ACBUS5: GPIOH5: I/O AD5 (default: In)
+// ACBUS6: GPIOH6: I/O AD6 (default: In)
+// ACBUS7: GPIOH7: I/O AD7 (default: In)
 //
-//  Channel B:
-//   BDBUS0: TCK/SK: OUT (SPI SCLK)
-//   BDBUS1: TDI/DO: OUT (SPI MOSI)
-//   BDBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo or loopback?
-//   BDBUS3: TMS/CS: OUT (SPI CS)
-//   BDBUS4: GPIOL0: OUT /RST
-//   BDBUS5: GPIOL1: IN  WAIT for Ch.A
-//   BDBUS6: GPIOL2: OUT CLK
-//   BDBUS7: GPIOL3: IN  S_DAT // TODO: Not used. It should be output/Lo? or Pull-up.
+// Channel B:
+// BDBUS0: TCK/SK: OUT (SPI SCLK)
+// BDBUS1: TDI/DO: OUT (SPI MOSI)
+// BDBUS2: TDO/DI: IN  (SPI MISO) // TODO: Not used. It should be output/Lo or loopback?
+// BDBUS3: TMS/CS: OUT (SPI CS)
+// BDBUS4: GPIOL0: OUT /RST
+// BDBUS5: GPIOL1: IN  WAIT for Ch.A
+// BDBUS6: GPIOL2: OUT CLK
+// BDBUS7: GPIOL3: IN  S_DAT // TODO: Not used. It should be output/Lo? or Pull-up.
 //
-//   BCBUS0: GPIOH0: I/O AD8  (default: In)
-//   BCBUS1: GPIOH1: I/O AD9  (default: In)
-//   BCBUS2: GPIOH2: I/O AD10 (default: In)
-//   BCBUS3: GPIOH3: I/O AD11 (default: In)
-//   BCBUS4: GPIOH4: I/O AD12 (default: In)
-//   BCBUS5: GPIOH5: I/O AD13 (default: In)
-//   BCBUS6: GPIOH6: I/O AD14 (default: In)
-//   BCBUS7: GPIOH7: I/O AD15 (default: In)
-//
+// BCBUS0: GPIOH0: I/O AD8  (default: In)
+// BCBUS1: GPIOH1: I/O AD9  (default: In)
+// BCBUS2: GPIOH2: I/O AD10 (default: In)
+// BCBUS3: GPIOH3: I/O AD11 (default: In)
+// BCBUS4: GPIOH4: I/O AD12 (default: In)
+// BCBUS5: GPIOH5: I/O AD13 (default: In)
+// BCBUS6: GPIOH6: I/O AD14 (default: In)
+// BCBUS7: GPIOH7: I/O AD15 (default: In)
 func (r *rom) n64SetupPins() error {
 	b := 0
 	e := 0
@@ -246,7 +249,7 @@ func (r *rom) n64SetupPins() error {
 	e++
 	r.commands[e] = 0x97 // Turn off adaptive clocking
 	e++
-	r.commands[e] = 0x8c //0x8d // Disable three-phase clocking // TODO
+	r.commands[e] = 0x8c // Enable three-phase clocking for I2C EEPROM
 	e++
 	r.commands[e] = 0x86 // set clock divisor
 	e++
@@ -267,7 +270,7 @@ func (r *rom) n64SetupPins() error {
 	// pins A
 	r.commands[e] = 0x80
 	e++
-	r.commands[e] = 0b0011_0001 // ALE_H:1, ALE_L:0, /RE:1, /WE:1, CS:0, (MISO:0, MOSI:0, SCLK:1)
+	r.commands[e] = 0b1011_0001 // ALE_H:1, ALE_L:0, /RE:1, /WE:1, CS:0, (MISO:0, MOSI:0, SCLK:1)
 	e++
 	r.commands[e] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out, (MISO:In, MOSI:Out, SCLK:Out)
 	e++
@@ -304,14 +307,14 @@ func (r *rom) n64SetupPins() error {
 	return nil
 }
 
-func (r *rom) n64ResetROM() error {
+func (r *rom) n64ResetCart() error {
 	b := 0
 	e := 0
 
 	// pins B
 	r.commands[e] = 0x80
 	e++
-	r.commands[e] = 0b0100_0001 // S_DAT, CLK, WAIT, /RST, CS
+	r.commands[e] = 0b0100_0001 // S_DAT, CLK, WAIT, /RST:0, CS
 	e++
 	r.commands[e] = 0b0101_1011 // S_DAT:In, CLK:Out, WAIT:In, /RST:Out, CS:Out
 	e++
@@ -322,7 +325,7 @@ func (r *rom) n64ResetROM() error {
 	b = e
 	r.commands[e] = 0x80
 	e++
-	r.commands[e] = 0b0101_0001 // S_DAT, CLK, WAIT, /RST, CS
+	r.commands[e] = 0b0101_0001 // S_DAT, CLK, WAIT, /RST:1, CS
 	e++
 	r.commands[e] = 0b0101_1011 // S_DAT:In, CLK:Out, WAIT:In, /RST:Out, CS:Out
 	e++
@@ -339,17 +342,17 @@ func (r *rom) n64ResetROM() error {
 func (r *rom) n64SetAddress(addr uint32) error {
 	bA := 0
 	eA := 0
-	bB := 8192
-	eB := 8192
+	bB := len(r.commands) / 2
+	eB := len(r.commands) / 2
 
-	// ALE_H / ALE_L = 0/0 -> wait -> 1/0 -> 1/1,CS:1 -> 1/1,CS:0
+	// ALE_H/ALE_L = ?/? -> 0/0 -> wait -> 1/0 -> 1/1,CS:1 -> 1/1,CS:0
+	// ALE_H/ALE_L = ?/? -> 0/0
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// TODO:
 	// wait 0 =  1.6[us]
 	// wait 1 =  2.8[us] (+1.2[us]  = 1.20u/byte = 150n/bit)
 	// wait 2 =  4.0[us] (+2.4[us]  = 1.20u/byte = 150n/bit)
@@ -363,20 +366,21 @@ func (r *rom) n64SetAddress(addr uint32) error {
 		r.commands[eA] = 0 // uint16 Hi
 		eA++
 	}
+	// ALE_H/ALE_L = 0/0 -> 1/0
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b1011_0001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// CS:1
+	// ALE_H/ALE_L = 1/0 -> 1/1, CS:0->1
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b1111_1001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// CS:0 for delay 200[ns]
+	// CS:1->0 for delay 200[ns]
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b1111_0001 // ALE_H, ALE_L, /RE, /WE, CS
@@ -408,14 +412,14 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	eA++
 	r.commands[eA] = 0xff // AD7-0:Out
 	eA++
-	// ALE_H / ALE_L = 0/1,CS:1
+	// ALE_H/ALE_L = 1/1 -> 0/1, CS:0->1
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b0111_1001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// CS:0 for delay
+	// CS:1->0 for delay
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b0111_0001 // ALE_H, ALE_L, /RE, /WE, CS
@@ -447,14 +451,14 @@ func (r *rom) n64SetAddress(addr uint32) error {
 	eA++
 	r.commands[eA] = 0xff // AD7-0:Out
 	eA++
-	// ALE_H / ALE_L = 0/0,CS:1
+	// ALE_H/ALE_L = 0/1 -> 0/0, CS:0->1
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b0011_1001 // ALE_H, ALE_L, /RE, /WE, CS
 	eA++
 	r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 	eA++
-	// CS:0 for delay
+	// CS:1->0 for delay
 	r.commands[eA] = 0x80
 	eA++
 	r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
@@ -502,11 +506,11 @@ func (r *rom) n64SetAddress(addr uint32) error {
 func (r *rom) n64ReadROM512() ([]byte, error) {
 	bA := 0
 	eA := 0
-	bB := 8192
-	eB := 8192
+	bB := len(r.commands) / 2
+	eB := len(r.commands) / 2
 
 	for i := 0; i < 256; i++ {
-		// /RE = 0
+		// /RE:1->0
 		r.commands[eA] = 0x80
 		eA++
 		r.commands[eA] = 0b0001_0001 // ALE_H, ALE_L, /RE, /WE, CS
@@ -523,14 +527,14 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 			r.commands[eA] = 0 // uint16 Hi
 			eA++
 		}
-		// CS:1
+		// CS:0->1
 		r.commands[eA] = 0x80
 		eA++
 		r.commands[eA] = 0b0001_1001 // ALE_H, ALE_L, /RE, /WE, CS
 		eA++
 		r.commands[eA] = 0b1111_1011 // ALE_H:Out, ALE_L:Out, /RE:Out, /WE:Out, CS:Out
 		eA++
-		// CS:0 for delay
+		// CS:1->0 for delay
 		r.commands[eA] = 0x80
 		eA++
 		r.commands[eA] = 0b0001_0001 // ALE_H, ALE_L, /RE, /WE, CS
@@ -555,7 +559,7 @@ func (r *rom) n64ReadROM512() ([]byte, error) {
 		r.commands[eA] = 0x83 // AD7-0
 		eA++
 
-		// /RE = 1
+		// /RE:0->1
 		r.commands[eA] = 0x80
 		eA++
 		r.commands[eA] = 0b0011_0001 // ALE_H, ALE_L, /RE, /WE, CS
