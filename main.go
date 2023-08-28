@@ -24,7 +24,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid arg: %v\n", os.Args[2])
 	}
-	size := uint32(i)
+	size := uint32(i) * 1024
 
 	verMajor, verMinor, verPatch := d2xx.Version()
 	fmt.Printf("d2xx library version: %d.%d.%d\n", verMajor, verMinor, verPatch)
@@ -64,7 +64,7 @@ func main() {
 		}
 
 		// dump all
-		w, err := os.Create("rom.rom")
+		w, err := os.Create("rom.z64")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 			break
